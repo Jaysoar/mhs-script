@@ -7,7 +7,12 @@ authors = [
     { name = "Jason Tang", email = "jason.tang@berkeley.edu" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "psutil>=7.2.2",
+    "pyvisa>=1.16.2",
+    "pyvisa-py>=0.8.1",
+    "zeroconf>=0.151.3",
+]
 
 [project.scripts]
 ee194 = "ee194:main"
