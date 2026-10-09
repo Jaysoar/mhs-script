@@ -3,15 +3,31 @@ revision = 3
 requires-python = ">=3.14"
 
 [[package]]
-name = "ee194"
+name = "easy-scpi"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyvisa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/74/f6eb533dc6d61a8edfbe609bb52354047b8d7cf2fa4dac6cea244fd1b517/easy_scpi-0.1.7.tar.gz", hash = "sha256:0f2ceb898acb7b34b1a0038f3ffc8918ed741133b39584ca79b7332eff96566b", size = 10732, upload-time = "2024-12-21T06:07:24.045Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/32/76b8bc505b28b40a9835a04ff62d47b006fd88600a5e7d8d07d3235f74d7/easy_scpi-0.1.7-py2.py3-none-any.whl", hash = "sha256:f69dba785acf83a5da6b09d54a400127732c9e27228e28243d198dc28d117846", size = 11141, upload-time = "2024-12-21T06:07:20.274Z" },
+]
+
+[[package]]
+name = "mhs_scripts"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "easy-scpi" },
     { name = "pyvisa-py" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pyvisa-py", specifier = ">=0.8.1" }]
+requires-dist = [
+    { name = "easy-scpi", specifier = ">=0.1.7" },
+    { name = "pyvisa-py", specifier = ">=0.8.1" },
+]
 
 [[package]]
 name = "pyvisa"

@@ -1,5 +1,5 @@
 [project]
-name = "ee194"
+name = "mhs_scripts"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -8,11 +8,12 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "easy-scpi>=0.1.7",
     "pyvisa-py>=0.8.1",
 ]
 
 [project.scripts]
-ee194 = "ee194:main"
+volt0 = "mhs_scripts.voltage_test0:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

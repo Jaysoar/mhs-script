@@ -2,6 +2,12 @@ from scpi.keysight import EDU36311A
 import time
 import argparse
 
+# most up-to-date version of scpi-python not yet published to PyPI. 
+# to fix:
+# - clone from https://github.com/ucb-bar/scpi-python to mhs-scripts/
+# - cd mhs-scripts/
+# - uv pip install -e .
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="voltage shmoo")
 
