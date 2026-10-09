@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 volt0 = "mhs_scripts.voltage_test0:main"
+volt1 = "mhs_scripts.voltage_test1:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
