@@ -9,13 +9,23 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "easy-scpi>=0.1.7",
+    "psutil>=7.2.2",
+    "pymeasure",
+    "pyusb>=1.3.1",
     "pyvisa-py>=0.8.1",
+    "scpi-python",
+    "zeroconf>=0.151.5",
 ]
 
 [project.scripts]
 volt0 = "mhs_scripts.voltage_test0:main"
 volt1 = "mhs_scripts.voltage_test1:main"
+volt2 = "mhs_scripts.voltage_test2:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+scpi-python = { path = "../scpi-python" }
+pymeasure = { git = "ssh://git@github.com/pymeasure/pymeasure.git" }
