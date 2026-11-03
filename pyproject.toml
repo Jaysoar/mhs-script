@@ -8,8 +8,10 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "matplotlib>=3.11.2",
     "psutil>=7.2.2",
-    "pymeasure",
+    "pymeasure[gui]",
+    "pyqt6>=6.12.0",
     "pyusb>=1.3.1",
     "pyvisa-py>=0.8.1",
     "zeroconf>=0.151.5",
@@ -17,6 +19,7 @@ dependencies = [
 
 [project.scripts]
 volt = "mhs_scripts.voltage_test:main"
+shmoo = "mhs_scripts.shmoo:main"
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]
