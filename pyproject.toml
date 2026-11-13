@@ -12,12 +12,14 @@ dependencies = [
     "psutil>=7.2.2",
     "pymeasure[gui]",
     "pyqt6>=6.12.0",
+    "pyserial>=3.5",
     "pyusb>=1.3.1",
     "pyvisa-py>=0.8.1",
     "zeroconf>=0.151.5",
 ]
 
 [project.scripts]
+dut = "mhs_scripts.dut:main"
 volt = "mhs_scripts.voltage_test:main"
 shmoo = "mhs_scripts.shmoo:main"
 
