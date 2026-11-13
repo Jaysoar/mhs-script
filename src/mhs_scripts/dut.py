@@ -9,6 +9,7 @@ import argparse
 import logging
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,8 +49,12 @@ def parse_uart(text: str) -> bool | None:
 
 def run_dut_test(clk_hz: float, seconds: int = 0, port: str = UART_PORT,
                  run_script: str = RUN_SCRIPT, elf: str | None = None,
-                 margin: float = RESULT_MARGIN) -> DutResult:
-    """Load and start the test at SoC clock clk_hz, looping for `seconds`, and wait for its verdict."""
+                 margin: float = RESULT_MARGIN,
+                 on_start: Callable[[], None] | None = None) -> DutResult:
+    """Load and start the test at SoC clock clk_hz, looping for `seconds`, and wait for its verdict.
+
+    on_start, if given, is called once the test is running on the DUT (after the JTAG load).
+    """
     # Open the UART before starting the test so none of its output is missed
     with serial.Serial(port, UART_BAUD, stopbits=serial.STOPBITS_TWO, timeout=0.1) as uart:
         uart.reset_input_buffer()
@@ -66,6 +71,8 @@ def run_dut_test(clk_hz: float, seconds: int = 0, port: str = UART_PORT,
             log.error(f"{run_script} exited with {proc.returncode}:\n{proc.stdout}{proc.stderr}")
             return DutResult(False, "load error", "")
         log.debug(f"OpenOCD output:\n{proc.stdout}{proc.stderr}")
+        if on_start:
+            on_start()
 
         # The test runs `seconds` of wall time (it counts cycles at clk_hz) after starting
         deadline = time.monotonic() + seconds + margin
