@@ -86,7 +86,7 @@ class ShmooProcedure(Procedure):
     current_limit = FloatParameter("PSU current limit", units="A", default=1.0)
     uart_port = Parameter("DUT UART port", default=UART_PORT)
     run_script = Parameter("DUT run script", default=RUN_SCRIPT)
-    test_seconds = IntegerParameter("Test duration", units="s", default=1, minimum=0)
+    test_seconds = IntegerParameter("Test duration", units="s", default=60, minimum=0)
 
     # ResultsImage requires <column>_start/_end/_step parameters for the image axes
     voltage_start = FloatParameter("Voltage start", units="V", default=0.6)
@@ -141,13 +141,14 @@ class ShmooProcedure(Procedure):
         frequencies = sweep(self.frequency_start, self.frequency_end, self.frequency_step)
         total = len(voltages) * len(frequencies)
 
-        for i, voltage in enumerate(voltages):
-            self.psu.ch_1.voltage_setpoint = voltage
-            for j, frequency in enumerate(frequencies):
+        # Voltage is the inner (fastest) loop: each frequency is swept across all voltages
+        for i, frequency in enumerate(frequencies):
+            self.wavegen.ch_2.frequency = frequency * 1e6
+            for j, voltage in enumerate(voltages):
                 if self.should_stop():
                     log.warning("Caught the stop flag in the procedure")
                     return
-                self.wavegen.ch_2.frequency = frequency * 1e6
+                self.psu.ch_1.voltage_setpoint = voltage
                 sleep(self.settle_time)
                 result, power = self.run_point(frequency)
                 if result.reason == "load error" and not self.should_stop():
@@ -156,6 +157,10 @@ class ShmooProcedure(Procedure):
                                 "power cycling the DUT and retrying once")
                     self.power_cycle()
                     result, power = self.run_point(frequency)
+                if result.reason == "aborted" or self.should_stop():
+                    # Don't record a point that was cut short
+                    log.warning("Caught the stop flag in the procedure")
+                    return
                 passed = result.passed
                 if not passed:
                     log.warning(f"DUT {result.reason} at {voltage:.3f} V, {frequency:.3f} MHz; "
@@ -171,7 +176,7 @@ class ShmooProcedure(Procedure):
                 log.info(f"{voltage:.3f} V, {frequency:.3f} MHz: {'PASS' if passed else 'FAIL'}, "
                          f"avg {power.mean * 1e3:.1f} mW, max {power.max * 1e3:.1f} mW "
                          f"({len(power.powers)} samples)")
-                self.emit("progress", 100 * (i * len(frequencies) + j + 1) / total)
+                self.emit("progress", 100 * (i * len(voltages) + j + 1) / total)
 
     def run_point(self, frequency):
         """Run the DUT test once at frequency (MHz), sampling supply power while it runs.
@@ -182,7 +187,8 @@ class ShmooProcedure(Procedure):
         power = PowerMonitor(self.psu.ch_1)
         try:
             result = run_dut_test(frequency * 1e6, self.test_seconds, self.uart_port,
-                                  self.run_script, on_start=power.start)
+                                  self.run_script, on_start=power.start,
+                                  should_stop=self.should_stop)
         finally:
             power.stop()
         return result, power
@@ -372,6 +378,22 @@ class MainWindow(ManagedWindow):
             widget_list=(shmoo_widget, power_widget),
         )
         self.setWindowTitle("V/F Shmoo")
+
+    # pymeasure's Abort also pauses the queue until "Resume" is clicked. Here Abort only cancels
+    # the running sweep: the button stays "Abort", and queued sweeps carry on afterwards.
+    def abort(self):
+        self.abort_button.setEnabled(False)  # until the sweep has actually stopped
+        try:
+            self.manager.abort()
+        except Exception:
+            log.exception("Failed to abort experiment")
+
+    def abort_returned(self, experiment):
+        self.manager.resume()  # undo the pause; starts the next queued sweep, if any
+        if self.manager.is_running():
+            self.abort_button.setEnabled(True)
+        else:
+            self.browser_widget.clear_button.setEnabled(True)
 
 
 def main() -> None:

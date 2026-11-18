@@ -7,6 +7,8 @@ comes back on channel B of the same FTDI.
 
 import argparse
 import logging
+import os
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -34,7 +36,7 @@ OPENOCD_TIMEOUT = 60.0
 @dataclass
 class DutResult:
     passed: bool
-    reason: str  # "pass", "fail", "timeout" or "load error"
+    reason: str  # "pass", "fail", "timeout", "load error" or "aborted"
     uart: str  # everything received on the UART
 
 
@@ -50,11 +52,15 @@ def parse_uart(text: str) -> bool | None:
 def run_dut_test(clk_hz: float, seconds: int = 0, port: str = UART_PORT,
                  run_script: str = RUN_SCRIPT, elf: str | None = None,
                  margin: float = RESULT_MARGIN,
-                 on_start: Callable[[], None] | None = None) -> DutResult:
+                 on_start: Callable[[], None] | None = None,
+                 should_stop: Callable[[], bool] | None = None) -> DutResult:
     """Load and start the test at SoC clock clk_hz, looping for `seconds`, and wait for its verdict.
 
     on_start, if given, is called once the test is running on the DUT (after the JTAG load).
+    should_stop, if given, is polled while waiting; once it returns True the test is abandoned
+    (killing run.sh/OpenOCD if they are still running) and the result's reason is "aborted".
     """
+    should_stop = should_stop or (lambda: False)
     # Open the UART before starting the test so none of its output is missed
     with serial.Serial(port, UART_BAUD, stopbits=serial.STOPBITS_TWO, timeout=0.1) as uart:
         uart.reset_input_buffer()
@@ -62,15 +68,30 @@ def run_dut_test(clk_hz: float, seconds: int = 0, port: str = UART_PORT,
         cmd = [run_script, str(int(round(clk_hz))), str(int(seconds))]
         if elf:
             cmd.append(elf)
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=OPENOCD_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            log.error(f"{run_script} timed out after {OPENOCD_TIMEOUT} s")
-            return DutResult(False, "load error", "")
+        # Own process group, so run.sh and the OpenOCD it starts can be killed together
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                start_new_session=True)
+        load_deadline = time.monotonic() + OPENOCD_TIMEOUT
+        while True:
+            try:
+                output, _ = proc.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                if should_stop() or time.monotonic() > load_deadline:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    try:
+                        proc.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        proc.communicate()
+                    if should_stop():
+                        return DutResult(False, "aborted", "")
+                    log.error(f"{run_script} timed out after {OPENOCD_TIMEOUT} s")
+                    return DutResult(False, "load error", "")
         if proc.returncode != 0:
-            log.error(f"{run_script} exited with {proc.returncode}:\n{proc.stdout}{proc.stderr}")
+            log.error(f"{run_script} exited with {proc.returncode}:\n{output}")
             return DutResult(False, "load error", "")
-        log.debug(f"OpenOCD output:\n{proc.stdout}{proc.stderr}")
+        log.debug(f"OpenOCD output:\n{output}")
         if on_start:
             on_start()
 
@@ -78,6 +99,8 @@ def run_dut_test(clk_hz: float, seconds: int = 0, port: str = UART_PORT,
         deadline = time.monotonic() + seconds + margin
         received = b""
         while time.monotonic() < deadline:
+            if should_stop():
+                return DutResult(False, "aborted", received.decode(errors="replace"))
             received += uart.read(uart.in_waiting or 1)
             text = received.decode(errors="replace")
             verdict = parse_uart(text)
