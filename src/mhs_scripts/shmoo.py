@@ -13,23 +13,18 @@ from matplotlib.patches import Patch
 from pymeasure.display.Qt import QtCore, QtWidgets
 from pymeasure.display.widgets import TabWidget
 from pymeasure.display.windows import ManagedWindow
-from pymeasure.experiment import FloatParameter, IntegerParameter, Parameter, Procedure
+from pymeasure.experiment import (FloatParameter, IntegerParameter, ListParameter, Parameter,
+                                  Procedure)
 from pymeasure.experiment.procedure import ProcedureStatus
-from pymeasure.instruments.agilent import Agilent33622A
 from pymeasure.instruments.keysight import KeysightEDU36311A
 
+from mhs_scripts.clock import CLOCKS, PULSEGEN_ADDRESS, WAVEGEN_IP
 from mhs_scripts.dut import RUN_SCRIPT, UART_PORT, run_dut_test
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 PSU_IP = "169.254.54.112"
-WAVEGEN_IP = "169.254.5.21"
-
-# DUT clock on wavegen CH2: 0 to 1.8 V square, into a high-Z load. The DUT clock input
-# is not 50 ohm terminated, so the wavegen MUST be in high-Z mode or the levels double.
-CLK_AMPLITUDE = 1.8  # Vpp
-CLK_OFFSET = 0.9  # V
 
 PASS_COLOR = "#2ca02c"
 FAIL_COLOR = "#d62728"
@@ -82,7 +77,9 @@ class PowerMonitor:
 
 class ShmooProcedure(Procedure):
     psu_address = Parameter("PSU address", default=f"TCPIP::{PSU_IP}::5025::SOCKET")
+    clock_generator = ListParameter("Clock generator", choices=list(CLOCKS), default="33622A")
     wavegen_address = Parameter("Wavegen address", default=f"TCPIP::{WAVEGEN_IP}::5025::SOCKET")
+    pulsegen_address = Parameter("81134A address", default=PULSEGEN_ADDRESS)
     current_limit = FloatParameter("PSU current limit", units="A", default=1.0)
     uart_port = Parameter("DUT UART port", default=UART_PORT)
     run_script = Parameter("DUT run script", default=RUN_SCRIPT)
@@ -101,40 +98,31 @@ class ShmooProcedure(Procedure):
     DATA_COLUMNS = ["voltage", "frequency", "voltage_meas", "pass", "power_avg", "power_max"]
 
     def startup(self):
+        clock_class = CLOCKS[self.clock_generator]
+        frequencies = sweep(self.frequency_start, self.frequency_end, self.frequency_step) * 1e6
+        if frequencies.min() < clock_class.min_frequency:
+            raise ValueError(f"Frequency start is below the {clock_class.name} minimum of "
+                             f"{clock_class.min_frequency / 1e6:g} MHz")
+        if frequencies.max() > clock_class.max_frequency:
+            raise ValueError(f"Frequency end is above the {clock_class.name} maximum of "
+                             f"{clock_class.max_frequency / 1e6:g} MHz")
+
         self.psu = KeysightEDU36311A(self.psu_address)
-        self.wavegen = Agilent33622A(self.wavegen_address)
+        address = (self.pulsegen_address if clock_class.name == "81134A"
+                   else self.wavegen_address)
+        self.clock = clock_class(address)
         log.info(f"PSU: {self.psu.id}")
-        log.info(f"Wavegen: {self.wavegen.id}")
+        log.info(f"Clock: {self.clock.id}")
 
         self.psu.ch_1.output_enabled = False
         self.psu.ch_1.current_limit = self.current_limit
         self.psu.ch_1.voltage_setpoint = self.voltage_start
 
-        self.wavegen.ch_2.output = False
-        # High-Z first: the load setting changes how amplitude/offset are interpreted
-        self.wavegen.ch_2.output_load = "INF"
-        self.wavegen.ch_2.shape = "SQU"
-        self.wavegen.ch_2.amplitude_unit = "VPP"
-        self.wavegen.ch_2.amplitude = CLK_AMPLITUDE
-        self.wavegen.ch_2.offset = CLK_OFFSET
-        self.wavegen.ch_2.frequency = self.frequency_start * 1e6
-        self.check_wavegen()
+        self.clock.setup(self.frequency_start * 1e6)
 
         # Power the DUT before driving its clock input
         self.psu.ch_1.output_enabled = True
-        self.wavegen.ch_2.output = True
-
-    def check_wavegen(self):
-        """Read back the wavegen clock settings and refuse to continue if any are wrong."""
-        ch = self.wavegen.ch_2
-        load, amplitude, offset = ch.output_load, ch.amplitude, ch.offset
-        log.info(f"Wavegen CH2: load={load}, {amplitude} Vpp, offset {offset} V, {ch.shape}")
-        # The 33622A reports high-Z (INFinity) as 9.9E+37
-        if not (isinstance(load, float) and load > 1e37):
-            raise RuntimeError(f"Wavegen CH2 load is {load!r}, not high-Z; refusing to output")
-        if abs(amplitude - CLK_AMPLITUDE) > 1e-3 or abs(offset - CLK_OFFSET) > 1e-3:
-            raise RuntimeError(f"Wavegen CH2 is {amplitude} Vpp / {offset} V offset, expected "
-                               f"{CLK_AMPLITUDE} Vpp / {CLK_OFFSET} V; refusing to output")
+        self.clock.enable(True)
 
     def execute(self):
         voltages = sweep(self.voltage_start, self.voltage_end, self.voltage_step)
@@ -143,7 +131,7 @@ class ShmooProcedure(Procedure):
 
         # Voltage is the inner (fastest) loop: each frequency is swept across all voltages
         for i, frequency in enumerate(frequencies):
-            self.wavegen.ch_2.frequency = frequency * 1e6
+            self.clock.set_frequency(frequency * 1e6)
             for j, voltage in enumerate(voltages):
                 if self.should_stop():
                     log.warning("Caught the stop flag in the procedure")
@@ -195,18 +183,18 @@ class ShmooProcedure(Procedure):
 
     def power_cycle(self):
         """Power cycle the DUT, keeping the clock off whenever it is unpowered."""
-        self.wavegen.ch_2.output = False
+        self.clock.enable(False)
         self.psu.ch_1.output_enabled = False
         sleep(self.power_cycle_time)
         self.psu.ch_1.output_enabled = True
         sleep(self.settle_time)
-        self.wavegen.ch_2.output = True
+        self.clock.enable(True)
         sleep(self.settle_time)
 
     def shutdown(self):
         # Clock off before power off; startup may have failed partway through
-        if hasattr(self, "wavegen"):
-            self.wavegen.ch_2.output = False
+        if hasattr(self, "clock"):
+            self.clock.enable(False)
         if hasattr(self, "psu"):
             self.psu.ch_1.output_enabled = False
         log.info("Outputs disabled")
@@ -366,7 +354,8 @@ class MainWindow(ManagedWindow):
         super().__init__(
             procedure_class=ShmooProcedure,
             inputs=[
-                "psu_address", "wavegen_address", "current_limit",
+                "psu_address", "clock_generator", "wavegen_address", "pulsegen_address",
+                "current_limit",
                 "uart_port", "run_script", "test_seconds",
                 "voltage_start", "voltage_end", "voltage_step",
                 "frequency_start", "frequency_end", "frequency_step",

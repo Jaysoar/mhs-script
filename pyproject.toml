@@ -28,4 +28,4 @@ requires = ["uv_build>=0.12.17,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-pymeasure = { git = "https://github.com/Jaysoar/pymeasure.git", rev = "dev/agilent-33622a" }
+pymeasure = { git = "https://github.com/Jaysoar/pymeasure.git", rev = "dev/keysight-81134a" }
