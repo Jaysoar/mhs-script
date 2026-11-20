@@ -3,11 +3,13 @@
 Both drive the DUT clock input (P1) with a 0 to 1.8 V square wave. The input is not 50 ohm
 terminated, so it is driven as a high-Z load. Each source has the same interface: setup()
 programs it with the output off and refuses to continue if a setting reads back wrong,
-set_frequency() changes the frequency, and enable() switches the output.
+set_frequency() changes the frequency, and enable() switches the output. open_clock() picks
+the source from the instrument's *IDN? reply.
 """
 
 import logging
 
+from pymeasure.adapters import VISAAdapter
 from pymeasure.instruments.agilent import Agilent33622A
 from pymeasure.instruments.keysight import Keysight81134A
 
@@ -15,7 +17,6 @@ log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 WAVEGEN_IP = "169.254.5.21"
-PULSEGEN_ADDRESS = "USB0::2391::16392::DE42800784::0::INSTR"
 
 # 33622A CH2: 0 to 1.8 V square in high-Z mode, so the levels are what reaches the DUT.
 CLK_AMPLITUDE = 1.8  # Vpp
@@ -127,4 +128,16 @@ class PulsegenClock:
         self.gen.ch_1.positive_output_enabled = on
 
 
-CLOCKS = {clock.name: clock for clock in (WavegenClock, PulsegenClock)}
+def open_clock(address: str):
+    """Open the clock source at address, picking its driver from the model in *IDN?."""
+    # "\n" read termination as the drivers use: needed over raw TCP/IP sockets
+    adapter = VISAAdapter(address, read_termination="\n")
+    try:
+        adapter.write("*IDN?")
+        idn = adapter.read().strip()
+    finally:
+        adapter.close()
+    for clock_class in (WavegenClock, PulsegenClock):
+        if clock_class.name in idn:
+            return clock_class(address)
+    raise RuntimeError(f"{address} is {idn!r}, not a 33622A or 81134A clock source")

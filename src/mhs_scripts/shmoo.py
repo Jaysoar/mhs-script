@@ -13,12 +13,11 @@ from matplotlib.patches import Patch
 from pymeasure.display.Qt import QtCore, QtWidgets
 from pymeasure.display.widgets import TabWidget
 from pymeasure.display.windows import ManagedWindow
-from pymeasure.experiment import (FloatParameter, IntegerParameter, ListParameter, Parameter,
-                                  Procedure)
+from pymeasure.experiment import FloatParameter, IntegerParameter, Parameter, Procedure
 from pymeasure.experiment.procedure import ProcedureStatus
 from pymeasure.instruments.keysight import KeysightEDU36311A
 
-from mhs_scripts.clock import CLOCKS, PULSEGEN_ADDRESS, WAVEGEN_IP
+from mhs_scripts.clock import WAVEGEN_IP, open_clock
 from mhs_scripts.dut import RUN_SCRIPT, UART_PORT, run_dut_test
 
 log = logging.getLogger(__name__)
@@ -77,9 +76,8 @@ class PowerMonitor:
 
 class ShmooProcedure(Procedure):
     psu_address = Parameter("PSU address", default=f"TCPIP::{PSU_IP}::5025::SOCKET")
-    clock_generator = ListParameter("Clock generator", choices=list(CLOCKS), default="33622A")
-    wavegen_address = Parameter("Wavegen address", default=f"TCPIP::{WAVEGEN_IP}::5025::SOCKET")
-    pulsegen_address = Parameter("81134A address", default=PULSEGEN_ADDRESS)
+    # 33622A or 81134A, told apart by *IDN?
+    clock_address = Parameter("Clock address", default=f"TCPIP::{WAVEGEN_IP}::5025::SOCKET")
     current_limit = FloatParameter("PSU current limit", units="A", default=1.0)
     uart_port = Parameter("DUT UART port", default=UART_PORT)
     run_script = Parameter("DUT run script", default=RUN_SCRIPT)
@@ -98,21 +96,20 @@ class ShmooProcedure(Procedure):
     DATA_COLUMNS = ["voltage", "frequency", "voltage_meas", "pass", "power_avg", "power_max"]
 
     def startup(self):
-        clock_class = CLOCKS[self.clock_generator]
+        clock = open_clock(self.clock_address)
+        log.info(f"Clock: {clock.id}")
         frequencies = sweep(self.frequency_start, self.frequency_end, self.frequency_step) * 1e6
-        if frequencies.min() < clock_class.min_frequency:
-            raise ValueError(f"Frequency start is below the {clock_class.name} minimum of "
-                             f"{clock_class.min_frequency / 1e6:g} MHz")
-        if frequencies.max() > clock_class.max_frequency:
-            raise ValueError(f"Frequency end is above the {clock_class.name} maximum of "
-                             f"{clock_class.max_frequency / 1e6:g} MHz")
+        if frequencies.min() < clock.min_frequency:
+            raise ValueError(f"Frequency start is below the {clock.name} minimum of "
+                             f"{clock.min_frequency / 1e6:g} MHz")
+        if frequencies.max() > clock.max_frequency:
+            raise ValueError(f"Frequency end is above the {clock.name} maximum of "
+                             f"{clock.max_frequency / 1e6:g} MHz")
+        # Only now, so shutdown() leaves a clock it never set up alone
+        self.clock = clock
 
         self.psu = KeysightEDU36311A(self.psu_address)
-        address = (self.pulsegen_address if clock_class.name == "81134A"
-                   else self.wavegen_address)
-        self.clock = clock_class(address)
         log.info(f"PSU: {self.psu.id}")
-        log.info(f"Clock: {self.clock.id}")
 
         self.psu.ch_1.output_enabled = False
         self.psu.ch_1.current_limit = self.current_limit
@@ -354,8 +351,7 @@ class MainWindow(ManagedWindow):
         super().__init__(
             procedure_class=ShmooProcedure,
             inputs=[
-                "psu_address", "clock_generator", "wavegen_address", "pulsegen_address",
-                "current_limit",
+                "psu_address", "clock_address", "current_limit",
                 "uart_port", "run_script", "test_seconds",
                 "voltage_start", "voltage_end", "voltage_step",
                 "frequency_start", "frequency_end", "frequency_step",
@@ -365,8 +361,6 @@ class MainWindow(ManagedWindow):
             x_axis="voltage",
             y_axis="voltage_meas",
             widget_list=(shmoo_widget, power_widget),
-            # Scroll the inputs so Queue/Abort stay reachable on short (e.g. RDP) screens
-            inputs_in_scrollarea=True,
         )
         self.setWindowTitle("V/F Shmoo")
 
