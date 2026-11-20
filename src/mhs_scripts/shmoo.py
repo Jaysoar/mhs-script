@@ -365,6 +365,8 @@ class MainWindow(ManagedWindow):
             x_axis="voltage",
             y_axis="voltage_meas",
             widget_list=(shmoo_widget, power_widget),
+            # Scroll the inputs so Queue/Abort stay reachable on short (e.g. RDP) screens
+            inputs_in_scrollarea=True,
         )
         self.setWindowTitle("V/F Shmoo")
 
